@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# /usr/bin/mount-and-open: a script used to mount a partition and open its mount
+# point in a ROX-Filer window
+
+# get the partition name
+
+#source /etc/rc.d/functions4puppy4
+
+case $1 in
+pmount)       exec pmount;;
+eventmanager) exec eventmanager;;
+unmount)        :;;
+unmountall)
+        for oneMNT in `tac /proc/mounts | grep -v 'initrd' | grep -oe '^/dev/[^[:blank:]]*'`
+        do           # tac is to revert to unmount sub mounts first #
+        umount $oneMNT
+        sleep 0.1
+        done
+        ;;
+esac
+
+device_name="$(basename $1)"
+
+if [ -d /mnt/$device_name ]
+then
+    mountpoint -q /mnt/$device_name
+    [ 0 -eq $? ] && exec rox /mnt/$device_name
+else
+    # create a mount point
+    mkdir /mnt/$device_name
+    [ 0 -ne $? ] && exit 1
+fi
+
+# mount the partition
+mount $1 /mnt/$device_name
+[ 0 -ne $? ] && exit 1
+
+exec rox /mnt/$device_name

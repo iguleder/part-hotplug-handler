@@ -1,0 +1,309 @@
+#!/bin/bash
+
+# /usr/bin/part-icon: a handler executed by part-hotplug-handler when a
+# partition is added or removed; its name and path are passed through the
+# environment
+
+#while [ too_fast ] ; do
+#PIDS=`pidof $0 | tr ' ' '\n'`
+#[ "`echo "$PIDS" | head -n1`" = $$ ] && break
+#sleep 0.5
+#done
+
+#. /etc/rc.d/functions4puppy4
+#. /etc/rc.d/PUPSTATE
+#sleep 0.5
+
+echo "$0:'$*'"
+echo "$0:'$@'"
+#env
+
+icon_unmounted_func() {
+    echo "icon_unmounted_func:'$*'"
+ #passed params: drivename category  ex: /dev/sdb1 usbdrv
+ DRVICON=drive48.png #default.
+ case $2 in
+ *usb*)     DRVICON=usbdrv48.png  ;;
+ *card*)    DRVICON=card48.png    ;;
+ *floppy*)  DRVICON=floppy48.png  ;;
+ *optical*) DRVICON=optical48.png ;;
+ esac
+
+ echo "<?xml version=\"1.0\"?>
+<env:Envelope xmlns:env=\"http://www.w3.org/2001/12/soap-envelope\">
+ <env:Body xmlns=\"http://rox.sourceforge.net/SOAP/ROX-Filer\">
+  <SetIcon>
+   <Path>$HOME/.pup_event/drive_$device_name</Path>
+   <Icon>/usr/local/lib/X11/pixmaps/${DRVICON}</Icon>
+  </SetIcon>
+ </env:Body>
+</env:Envelope>"  | rox -R
+}
+
+icon_mounted_func() {
+  echo "$0:icon_mounted_func:'$*'"
+ #passed params: drivename category  ex: /dev/sdb1 usbdrv
+ DRVICON=drive_mntd48.png #default.
+ case $2 in
+ *usb*)     DRVICON=usbdrv_mntd48.png  ;;
+ *card*)    DRVICON=card_mntd48.png    ;;
+ *floppy*)  DRVICON=floppy_mntd48.png  ;;
+ *optical*) DRVICON=optical_mntd48.png ;;
+ esac
+
+  #partitions mntd on /initrd/* then must be mntd at boot. mostly cannot unmount.
+  #also, full hd install has partition mntd on '/'.
+ if [ "`rdev`" = "$1 /" ] || [ "`df | grep -w "^$1" | grep '/initrd/mnt/dev_save'`" ] ; then
+  DRVICON=drive_mntd_boot48.png #default.
+  case $2 in
+  *usbdrv*)  DRVICON=usbdrv_mntd_boot48.png  ;;
+  *card*)    DRVICON=card_mntd_boot48.png    ;;
+  *floppy*)  DRVICON=floppy_mntd_boot48.png  ;;
+  *optical*) DRVICON=optical_mntd_boot48.png ;;
+  esac
+ fi
+
+ echo "<?xml version=\"1.0\"?>
+<env:Envelope xmlns:env=\"http://www.w3.org/2001/12/soap-envelope\">
+ <env:Body xmlns=\"http://rox.sourceforge.net/SOAP/ROX-Filer\">
+  <SetIcon>
+   <Path>$HOME/.pup_event/drive_$device_name</Path>
+   <Icon>/usr/local/lib/X11/pixmaps/${DRVICON}</Icon>
+  </SetIcon>
+ </env:Body>
+</env:Envelope>"  | rox -R
+}
+
+
+_create_AppInfo() {
+
+echo "<?xml version=\"1.0\"?>
+<AppInfo>
+  <Summary>Filesystem: $FS Size: $sizeSTRING</Summary>
+  <About>
+   <Purpose>Drive icons are part of Puppy Event Manager, see System menu</Purpose>
+   <Authors>Barry Kauler  LGPL 2008</Authors>
+   <Authors>Dima Krasner ?GPL? 2013</Authors>
+  </About>
+  <AppMenu>
+   <Item option=\"pmount\" icon=\"gtk-harddisk\"><Label>Run Pmount Puppy Drive Mounter</Label></Item>
+   <Item option=\"eventmanager\" icon=\"gtk-execute\"><Label>Run Desktop Drive Icon Manager</Label></Item>
+   <Item option=\"unmount\" icon=\"gtk-harddisk\"><Label>Unmount $drive_name (if currently mounted)</Label></Item>
+   <Item option=\"unmountall\" icon=\"gtk-harddisk\"><Label>Unmount ALL mounted partitions</Label></Item>
+  </AppMenu>
+</AppInfo>">$HOME/.pup_event/drive_$device_name/AppInfo.xml
+}
+
+_convert_block_bytes(){
+
+        if test "$SIZE" -gt $((1024*1024)); then #GB
+        sizeSTRING=`echo "scale=1; $SIZE / ($((1024*1024)))" | bc -l`"GB"
+      elif test "$SIZE" -gt $((1024*1)); then    #MB
+        sizeSTRING=`echo "scale=1; $SIZE / ($((1024*1)))" | bc -l`"MB"
+      else
+        sizeSTRING=`echo "scale=1; $SIZE / ($((1*1)))" | bc -l`"KB"
+        fi
+}
+
+# coordinates for the first icon
+IFS=x read maxX maxY <<EOI
+$( xwininfo -root | grep geometry | grep -o -e '[0-9x]*' )
+EOI
+
+echo $maxX $maxY
+
+source /etc/eventmanager
+echo ICON_PLACE_ORIENTATION=$ICON_PLACE_ORIENTATION
+case $ICON_PLACE_ORIENTATION in
+bottom) INITIAL_X=32;INITIAL_Y=$((maxY-96));;
+left)   INITIAL_X=32;INITIAL_Y=36;;
+right)  INITIAL_X=$((maxX-48));INITIAL_Y=36;;
+top)    INITIAL_X=32;INITIAL_Y=36;;
+esac
+echo INITIAL_X=$INITIAL_X INITIAL_Y=$INITIAL_Y
+test "$INITIAL_X" || INITIAL_X=32 #set top left default
+test "$INITIAL_Y" || INITIAL_Y=36
+
+# the spacing between icons
+ICON_SPACING=64
+
+# get the current number of icons
+if [ -f $HOME/.pup_event/.icons_count ]
+then
+    #icons_count="$(cat $HOME/.pup_event/.icons_count)"
+    read icons_count <$HOME/.pup_event/.icons_count
+else
+    icons_count=1
+fi
+
+test $icons_count -le 0 && icons_count=1
+
+# check the VARIABES
+if [ "$DEVNAME" ]; then
+        :
+elif [ "$DEVPATH" ]; then
+        DEVNAME="/dev/${DEVPATH##*/}"
+else echo "$0:Error:Need UDEV's DEVNAME or DEVPATH"; exit 1;
+fi
+#DEVPATH=/devices/pci0000:00/0000:00:1f.2/host0/target0:0:0/0:0:0:0/block/sda/sda19
+#echo "DEVPATH=$DEVPATH"
+#echo "DEVNAME=$DEVNAME"
+
+device_name="${DEVNAME##*/}"
+
+# create unique path for ROX
+test -d $HOME/.pup_event/drive_$device_name || mkdir -p $HOME/.pup_event/drive_$device_name
+test -f $HOME/.pup_event/drive_$device_name/mount-and-open -a -x $HOME/.pup_event/drive_$device_name/mount-and-open || cp -a /sbin/mount-and-open $HOME/.pup_event/drive_$device_name/
+test -e $HOME/.pup_event/drive_$device_name/AppRun || ln -s mount-and-open $HOME/.pup_event/drive_$device_name/AppRun
+
+case "$ACTION" in
+    add)
+        # guess the fs type and don't process further if undesired -
+        # set guessfstype as you wish and adjust grep pattern
+        guessfstype=guess_fstype
+        FS=`$guessfstype $DEVNAME | grep -viE "unknown|none|swap|Extended|Ext'd"`
+        test "$FS" || exit 0
+
+        # computge SIZE of partition
+        test -f /sys/$DEVPATH/size && read SIZE </sys/$DEVPATH/size
+        test "$SIZE" || SIZE='???'
+        test "${SIZE//[[:digit:]]/}" && SIZE='???'
+                        # 512 bytes blocks -> 1024 bytes blocks #
+        test "$SIZE" = '???' || { SIZE=$((SIZE/2)); _convert_block_bytes; }
+
+        # create AppInfo.xml
+        test -e $HOME/.pup_event/drive_$device_name/AppInfo.xml || _create_AppInfo
+
+
+        case $ICON_PLACE_ORIENTATION in
+        top|bottom)
+        [ $icons_count = 1 ] || spacing=$(( $ICON_SPACING * $((icons_count-1)) ))
+        [ $icons_count = 1 ] && x=$INITIAL_X || x=$(( $INITIAL_X + $spacing ))
+        [ $x -gt $((maxX-64)) ] && { x=$INITIAL_X; INITIAL_Y=$((INITIAL_Y + ICON_SPACING));icons_count=1; }
+        ;;
+        left|right|*)
+        # calculate the total amount of spacing
+        #spacing="$(expr $ICON_SPACING \* $icons_count)"
+        [ $icons_count = 1 ] || spacing=$(( $ICON_SPACING * $((icons_count-1)) ))
+
+        # calculate the Y coordinate of the new icon
+        #y="$(expr $INITIAL_Y + $spacing)"
+        [ $icons_count = 1 ] && y=$INITIAL_Y || y=$(( $INITIAL_Y + $spacing ))
+        [ $y -gt $((maxY-64)) ] && { y=$INITIAL_Y; INITIAL_X=$((INITIAL_X + ICON_SPACING));icons_count=1; }
+        ;;
+        esac
+        echo INITIAL_X=$INITIAL_X y=$y
+
+        case $ICON_PLACE_ORIENTATION in
+        top|bottom)
+        echo -n "<?xml version=\"1.0\"?>
+        <env:Envelope xmlns:env=\"http://www.w3.org/2001/12/soap-envelope\">
+            <env:Body xmlns=\"http://rox.sourceforge.net/SOAP/ROX-Filer\">
+                <PinboardAdd>
+                    <Path>$HOME/.pup_event/drive_$device_name</Path>
+                    <X>$x</X>
+                    <Y>$INITIAL_Y</Y>
+                    <Label>$device_name</Label>
+                    <Args>$DEVNAME</Args>
+                </PinboardAdd>
+            </env:Body>
+        </env:Envelope>" | rox -R
+        ;;
+        left|right|*)
+        # create the icon
+        echo -n "<?xml version=\"1.0\"?>
+        <env:Envelope xmlns:env=\"http://www.w3.org/2001/12/soap-envelope\">
+            <env:Body xmlns=\"http://rox.sourceforge.net/SOAP/ROX-Filer\">
+                <PinboardAdd>
+                    <Path>$HOME/.pup_event/drive_$device_name</Path>
+                    <X>$INITIAL_X</X>
+                    <Y>$y</Y>
+                    <Label>$device_name</Label>
+                    <Args>$DEVNAME</Args>
+                </PinboardAdd>
+            </env:Body>
+        </env:Envelope>" | rox -R
+        ;;
+        esac
+
+        # increment the number of icons
+        #icons_count="$(expr 1 + $icons_count)"
+        icons_count=$(( 1 + $icons_count ))
+        echo $icons_count
+        echo -n $icons_count > $HOME/.pup_event/.icons_count
+
+        # check for usb
+        if test -e /sys/block/$device_name; then
+        realPATH=`realpath /sys/block/$device_name`
+        elif test -e "/sys/block/`echo $device_name | sed 's/[0-9]*$//'`/$device_name"; then
+        realPATH=`realpath /sys/block/$(echo $device_name | sed 's/[0-9]*$//')/$device_name`
+        fi
+
+        case "$realPATH" in
+        *usb*) kDRIVE=usb;;
+        *) :;;
+        esac
+
+        # check for removable
+        if test -f /sys/block/$device_name/removable; then
+        read removABLE< /sys/block/$device_name/removable
+        fi
+
+        case "$removeABLE" in
+        1) kDRIVE="${kDRIVE}cd";;
+        *) :;;
+        esac
+
+        case $ID_BUS in
+        usb)  :;;
+        scsi) :;; #SATA HDD
+        esac
+
+        case $ID_TYPE in
+        cd)   :;; # CD
+        disk) :;; # HDD USB flash pendrive
+        esac
+
+        case $ID_CDROM in
+        1):;;
+        esac
+
+        case $ID_VENDOR in
+        ATA)  :;; # internal (S)ATA
+        USB)  :;; #
+        esac
+
+        # check mounted (very simple)
+        test -e /mnt/$device_name || mkdir -p /mnt/$device_name
+     if mountpoint /mnt/$device_name || test "`mountpoint -n /initrd/mnt/dev_save 2>/dev/null |cut -f1 -d' '`" = "${DEVNAME}"; then
+     icon_mounted_func ${DEVNAME} ${kDRIVE}
+     else
+     rmdir --ignore-fail-on-non-empty /mnt/$device_name
+     icon_unmounted_func ${DEVNAME} ${kDRIVE}
+     fi
+      #if ( mountpoint /mnt/$device_name ||
+      #[ "`mountpoint -n /initrd/mnt/dev_save 2>/dev/null |cut -f1 -d' '`" = "${DEVNAME}" ] )
+
+      #mountpoint -q /mnt/$device_name || rmdir /mnt/$device_name
+
+        ;;
+
+    remove)
+        # decrement the number of icons
+        #icons_count="$(expr $icons_count - 1)"
+        icons_count=$(( $icons_count - 1 ))
+
+        echo -n $icons_count > $HOME/.pup_event/.icons_count
+
+        # remove the icon
+        echo -n "<?xml version=\"1.0\"?>
+<env:Envelope xmlns:env=\"http://www.w3.org/2001/12/soap-envelope\">
+    <env:Body xmlns=\"http://rox.sourceforge.net/SOAP/ROX-Filer\">
+        <PinboardRemove>
+            <Path>$HOME/.pup_event/drive_$device_name</Path>
+            <Args>$DEVNAME</Args>
+        </PinboardRemove>
+    </env:Body>
+</env:Envelope>" | rox -R
+    ;;
+esac
